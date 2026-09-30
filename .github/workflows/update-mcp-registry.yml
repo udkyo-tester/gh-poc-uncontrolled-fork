@@ -1,0 +1,58 @@
+name: Update MCP Registry
+
+# Mirrors the real update-mcp-registry.yml; validation and publishing are stand-ins.
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types:
+      - completed
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      actions: read
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+      is-version-tag: ${{ steps.read-version.outputs.is-version-tag }}
+    steps:
+      - name: Download version artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-version
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Read and validate version tag
+        id: read-version
+        run: |
+          VERSION=$(tr -d '\r\n' < version.txt)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if echo "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "is-version-tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-version-tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  check-and-update-registry:
+    needs: gate
+    if: needs.gate.outputs.is-version-tag == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.gate.outputs.version }}
+
+      - name: Stand-in for "Login to MCP Registry" and "Publish to MCP Registry"
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          echo "Running on:      $GITHUB_REPOSITORY @ $GITHUB_REF"
+          echo "Would publish:   server.json from ref $VERSION"
+          echo "OIDC available:  ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"

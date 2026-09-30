@@ -1,0 +1,63 @@
+name: PyPI Upload
+
+# Mirrors the real pypi_upload.yml; the Jenkins call is a stand-in.
+
+on:
+  workflow_run:
+    workflows: ["Release and Build Python Wheels"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: version tag name to release (e.g. v1.2.3)
+
+permissions:
+  contents: read
+
+jobs:
+  upload-to-pypi:
+    name: Upload to PyPI via Jenkins
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      actions: read
+    steps:
+      - name: Download version artifact
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-version
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Read version from artifact
+        if: github.event_name == 'workflow_run'
+        id: artifact-version
+        run: echo "version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Stand-in for "Trigger Jenkins Job" (PyPI-publish)
+        env:
+          JENKINS_API_TOKEN: ${{ secrets.POC_SECRET }}
+          VERSION: ${{ github.event.inputs.version || steps.artifact-version.outputs.version || github.event.workflow_run.head_branch }}
+          PYPI_REPO: "pypi"
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          echo "Triggered by:     $TRIGGER_EVENT from $TRIGGER_REPO"
+          echo "Running on:       $GITHUB_REPOSITORY @ $GITHUB_REF"
+          echo "Would publish:    VERSION=$VERSION PYPI_REPO=$PYPI_REPO"
+          echo "Secret available: ${JENKINS_API_TOKEN:+yes} (length ${#JENKINS_API_TOKEN})"
+
+      - name: Save version for downstream workflows
+        env:
+          VERSION: ${{ github.event.inputs.version || steps.artifact-version.outputs.version || github.event.workflow_run.head_branch }}
+        run: echo "$VERSION" > version.txt
+
+      - name: Upload version artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-version
+          path: version.txt
